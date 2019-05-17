@@ -1,0 +1,58 @@
+replicaCount: 1
+
+image:
+  nginxRepository: figured/kube-demo-nginx
+  phpRepository: figured/kube-demo-php
+  pullPolicy: Always
+  # The tag should be specified and will be used for both containers
+  # tag: latest
+
+service:
+  type: ClusterIP
+  port: 80
+
+application:
+  track: default
+  name: kube-demo
+
+baseUrl: test.figured.farm
+
+ingress:
+  enabled: true
+  path: /
+
+nginxResources:
+  requests:
+    cpu: 50m
+    memory: 64M
+
+phpResources:
+  requests:
+    cpu: 50m
+    memory: 128M
+
+dotenv:
+  debug: false
+
+extraEnvs: {}
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+mysql:
+  imageTag: 5.7
+  persistence:
+    size: 2Gi
+  mysqlRootPassword: secret
+  mysqlPassword: secret
+  mysqlUser: figured
+  mysqlDatabase: figured
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512M
+  metrics:
+    enabled: true

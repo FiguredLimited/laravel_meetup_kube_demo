@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: figured-db-migration
+  namespace: default
+  labels:
+    app: figured
+spec:
+  template:
+    metadata:
+      labels:
+        app: figured
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: dotenv
+          configMap:
+            name: figured-dotenv
+      containers:
+      - name: migration
+        image: figured/kube-demo-php:latest
+        imagePullPolicy: Always
+        command:
+        - sh
+        - -c
+        - until nc -z mysql 3306; do echo waiting for mysql; sleep 1; done; php /var/www/html/artisan migrate --force
+        volumeMounts:
+          - name: dotenv
+            mountPath: /var/www/html/.env
+            subPath: .env
+            readOnly: true

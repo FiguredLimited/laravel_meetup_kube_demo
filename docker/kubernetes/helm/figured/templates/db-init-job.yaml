@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ template "figtest.fullname" . }}-db-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": hook-succeeded
+  labels:
+    app: {{ template "appname" . }}
+    chart: {{ template "figtest.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  template:
+    metadata:
+      labels:
+        app: {{ template "appname" . }}
+        release: {{ .Release.Name }}
+{{- with .Values.podAnnotations }}
+      annotations:
+{{ toYaml . | indent 8 }}
+{{- end }}
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: dotenv
+          configMap:
+            name: "{{ .Release.Name }}-dotenv"
+      containers:
+        - name: migration
+          image: "{{ .Values.image.phpRepository }}:{{ .Values.image.tag | default .Release.Name }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - 'sh'
+            - '-c'
+            - 'until nc -z {{ template "mysql.mysql.fullname" . }} 3306; do echo waiting for mysql; sleep 1; done; php /var/www/html/artisan migrate --seed'
+          volumeMounts:
+            - name: dotenv
+              mountPath: /var/www/html/.env
+              subPath: .env
+              readOnly: true
+        {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+        {{- end }}
+        {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+        {{- end }}
+        {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}

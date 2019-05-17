@@ -1,0 +1,144 @@
+image: figured/php-dev:7.2
+variables:
+  GIT_STRATEGY: fetch
+
+.test_env_deploy: &test_env_deploy
+  script:
+    - DEPLOYMENT_SUBDOMAIN=`echo $CI_COMMIT_REF_SLUG | cut -c 1-30`
+    # Log in to docker hub
+    - docker login -u $DOCKER_HUB_LOGIN_USER -p $DOCKER_HUB_LOGIN_PASS
+    # Build image
+    - docker build -f docker/build/php/Dockerfile -t figured/kube-demo-php:$CI_COMMIT_SHA .
+    - docker build -f docker/build/nginx/Dockerfile -t figured/kube-demo-nginx:$CI_COMMIT_SHA .
+    - docker push figured/kube-demo-php:$CI_COMMIT_SHA
+    - docker push figured/kube-demo-nginx:$CI_COMMIT_SHA
+    # Prepare helm variables
+    - cd docker/kubernetes/helm/figured
+    - helm init --client-only
+    - helm dependency build
+    - cd ..
+    - 'echo "image:" >> helm_values.yaml'
+    - 'echo "  tag: $CI_COMMIT_SHA" >> helm_values.yaml'
+    - 'echo "application:" >> helm_values.yaml'
+    - 'echo "  name: $CI_ENVIRONMENT_SLUG" >> helm_values.yaml'
+    # Deploy
+    - helm upgrade --install --namespace test -f helm_values.yaml $DEPLOYMENT_SUBDOMAIN figured
+    - kubectl rollout status -n test deployment/$DEPLOYMENT_SUBDOMAIN-figured
+    - echo "Deploy complete. Environment available at $DEPLOYMENT_SUBDOMAIN.test.figured.farm"
+
+stages:
+  - build
+  - test
+  - deploy
+  - test_env_stop
+
+build:
+  stage: build
+  cache:
+    paths:
+      - vendor
+  artifacts:
+    paths:
+      - vendor
+      - .env
+  script:
+    - cp .env.example .env
+    - composer install -noa --prefer-dist --no-progress --no-suggest 2>&1
+
+
+phpunit:
+  stage: test
+  script:
+    - vendor/bin/phpunit
+
+deploy_test:
+  <<: *test_env_deploy
+  stage: deploy
+  image: figured/docker-kubectl-helm-git
+  when: manual
+  variables:
+    DOCKER_DRIVER: overlay2
+  services:
+    - docker:dind
+  except:
+    - development
+    - master
+  environment:
+    name: test/$CI_COMMIT_REF_NAME
+    url: https://$CI_COMMIT_REF_NAME.test.figured.farm
+    on_stop: stop_test
+
+deploy_staging:
+  <<: *test_env_deploy
+  stage: deploy
+  image: figured/docker-kubectl-helm-git
+  variables:
+    DOCKER_DRIVER: overlay2
+  services:
+    - docker:dind
+  only:
+    - development
+  environment:
+    name: staging
+    url: https://development.test.figured-dev.farm
+
+deploy_production:
+  stage: deploy
+  image: figured/docker-kubectl-helm-git
+  environment:
+    name: production
+    url: https://messageboard.figured.farm
+  variables:
+    DOCKER_DRIVER: overlay2
+  services:
+    - docker:dind
+  only:
+    - master
+  script:
+    # Log in to docker hub
+    - docker login -u $DOCKER_HUB_LOGIN_USER -p $DOCKER_HUB_LOGIN_PASS
+    # Build image
+    - docker build -f docker/build/php/Dockerfile -t figured/kube-demo-php:$CI_COMMIT_SHA .
+    - docker build -f docker/build/nginx/Dockerfile -t figured/kube-demo-nginx:$CI_COMMIT_SHA .
+    - docker push figured/kube-demo-php
+    - docker push figured/kube-demo-nginx
+    # Patch yaml
+    - |
+      kubectl patch --type=strategic -n default --local -o yaml -f docker/kubernetes/prod/deployment.yaml -p "{\"spec\": {\"template\": {\"spec\": {\"containers\": [{\"name\": \"php\", \"image\": \"figured/kube-demo-php:$CI_COMMIT_SHA\"}, {\"name\": \"nginx\", \"image\": \"figured/kube-demo-nginx:$CI_COMMIT_SHA\"}]}}}}" > docker/kubernetes/prod/deployment.patched.yaml
+    - |
+      kubectl patch --type=strategic -n default --local -o yaml -f docker/kubernetes/prod/db-migration-job.yaml -p "{\"spec\": {\"template\": {\"spec\": {\"containers\": [{\"name\": \"migration\", \"image\": \"figured/kube-demo-php:$CI_COMMIT_SHA\"}]}}}}" > docker/kubernetes/prod/db-migration-job.patched.yaml
+    # Clean up any possible previously stuck db migration job
+    - kubectl delete job -n default figured-db-migration --ignore-not-found
+    # Deploy configs and run migration
+    - kubectl apply -n default -f docker/kubernetes/prod/dotenv.yaml
+    - kubectl apply -n default -f docker/kubernetes/prod/nginx-conf.yaml
+    - kubectl apply -n default -f docker/kubernetes/prod/db-migration-job.patched.yaml
+    # Wait for the job to complete and delete migration job
+    - kubectl wait --for=condition=Complete --timeout=600s -n default job/figured-db-migration
+    - kubectl delete job -n default figured-db-migration --ignore-not-found
+    # Deploy the code, service and ingress
+    - kubectl apply -n default -f docker/kubernetes/prod/deployment.patched.yaml
+    - kubectl apply -n default -f docker/kubernetes/prod/service.yaml
+    - kubectl apply -n default -f docker/kubernetes/prod/ingress.yaml
+
+stop_test:
+  stage: test_env_stop
+  image: figured/docker-kubectl-helm-git
+  when: manual
+  allow_failure: true
+  variables:
+    DOCKER_DRIVER: overlay2
+  services:
+    - docker:dind
+  except:
+    - development
+    - master
+  dependencies: []
+  environment:
+    name: test/$CI_COMMIT_REF_NAME
+    url: https://$CI_COMMIT_REF_NAME.test.figured.farm
+    action: stop
+  script:
+    - DEPLOYMENT_SUBDOMAIN=`echo $CI_COMMIT_REF_SLUG | cut -c 1-30`
+    - helm init --client-only
+    - helm del --purge $DEPLOYMENT_SUBDOMAIN

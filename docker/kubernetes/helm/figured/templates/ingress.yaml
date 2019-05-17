@@ -1,0 +1,27 @@
+{{- if .Values.ingress.enabled -}}
+    {{- $fullName := include "figtest.fullname" . -}}
+    {{- $url := include "figtest.url" . -}}
+    {{- $ingressPath := .Values.ingress.path -}}
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    app: {{ template "appname" . }}
+    chart: {{ template "figtest.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+    {{- with .Values.ingress.annotations }}
+  annotations:
+    {{ toYaml . | indent 4 }}
+    {{- end }}
+spec:
+  rules:
+    - host: {{ $url }}
+      http:
+        paths:
+          - path: "/"
+            backend:
+              serviceName: {{ $fullName }}
+              servicePort: http
+    {{- end }}

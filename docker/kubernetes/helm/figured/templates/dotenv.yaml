@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dotenv
+data:
+  .env: |-
+    APP_NAME=Laravel
+    APP_ENV="staging-{{ .Release.Name }}"
+    APP_KEY=base64:F9MP4Ri8yC6oZwJ5CJUHoyWJrrDB1jxYiAPIBLqRrMQ=
+    APP_DEBUG={{ .Values.dotenv.debug }}
+    APP_URL={{ template "figtest.url" . }}
+
+    LOG_CHANNEL=stack
+
+    DB_CONNECTION=mysql
+    DB_PORT=3306
+    DB_DATABASE={{ .Values.mysql.mysqlDatabase | quote}}
+    DB_USERNAME={{ .Values.mysql.mysqlUser | quote }}
+    DB_HOST="{{ template "mysql.mysql.fullname" . }}"
+    DB_PASSWORD={{ .Values.mysql.mysqlPassword | quote }}
+
+    BROADCAST_DRIVER=log
+    CACHE_DRIVER=file
+    QUEUE_CONNECTION=sync
+    SESSION_DRIVER=file
+    SESSION_LIFETIME=120

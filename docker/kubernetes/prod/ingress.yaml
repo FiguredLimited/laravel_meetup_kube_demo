@@ -1,0 +1,16 @@
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: figured
+  namespace: default
+  labels:
+    app: figured
+spec:
+  rules:
+    - host: messageboard.figured.farm
+      http:
+        paths:
+          - path: "/"
+            backend:
+              serviceName: figured
+              servicePort: http

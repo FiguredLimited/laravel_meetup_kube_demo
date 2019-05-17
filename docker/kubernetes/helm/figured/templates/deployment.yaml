@@ -1,0 +1,93 @@
+apiVersion: apps/v1beta2
+kind: Deployment
+metadata:
+  name: {{ template "figtest.fullname" . }}
+  labels:
+    app: {{ template "appname" . }}
+    track: {{ .Values.application.track }}
+    tier: web
+    chart: {{ template "figtest.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ template "appname" . }}
+      tier: web
+      release: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ template "appname" . }}
+        track: {{ .Values.application.track }}
+        tier: web
+        release: {{ .Release.Name }}
+      annotations:
+        checksum/dotenv: {{ include (print $.Template.BasePath "/dotenv.yaml") . | sha256sum }}
+    spec:
+      volumes:
+        - name: nginx-conf
+          configMap:
+            name: "{{ .Release.Name }}-nginx"
+        - name: dotenv
+          configMap:
+            name: "{{ .Release.Name }}-dotenv"
+      initContainers:
+        - name: wait-for-mysql
+          image: "{{ .Values.image.phpRepository }}:{{ .Values.image.tag | default .Release.Name }}"
+          command: ['sh', '-c', 'until nc -z {{ template "mysql.mysql.fullname" . }} 3306; do echo waiting for mysql; sleep 1; done;']
+      containers:
+        - name: "php"
+          image: "{{ .Values.image.phpRepository }}:{{ .Values.image.tag | default .Release.Name }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+          volumeMounts:
+            - name: dotenv
+              mountPath: /var/www/html/.env
+              subPath: .env
+              readOnly: true
+          env:
+            - name: MYSQL_HOST
+              value: {{ template "mysql.mysql.fullname" . }}
+            - name: MYSQL_USER
+              value: {{ .Values.mysql.mysqlUser | quote }}
+            - name: MYSQL_PWD
+              value: {{ .Values.mysql.mysqlPassword | quote }}
+          resources:
+{{ toYaml .Values.phpResources | indent 12 }}
+        - name: "nginx"
+          image: "{{ .Values.image.nginxRepository }}:{{ .Values.image.tag | default .Release.Name }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+              scheme: HTTP
+          volumeMounts:
+            - mountPath: /etc/nginx/conf.d
+              name: nginx-conf
+              readOnly: true
+          resources:
+{{ toYaml .Values.nginxResources | indent 12 }}
+    {{- with .Values.nodeSelector }}
+      nodeSelector:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+    {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+    {{- end }}
+  {{- with .Values.tolerations }}
+      tolerations:
+{{ toYaml . | indent 8 }}
+    {{- end }}
